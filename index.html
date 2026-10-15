@@ -83,7 +83,8 @@
         .badge-zero-error { color: #94a3b8; font-weight: 400; }
 
         /* Controles de Bip */
-        .scan-input { width: 100%; padding: 18px; font-size: 24px; text-align: center; border: 2px solid #ff5722; border-radius: 8px; outline: none; box-shadow: 0 4px 10px rgba(255,87,34,0.05); }
+        .scan-input { width: 100%; padding: 18px; font-size: 24px; text-align: center; border: 2px solid #ff5722; border-radius: 8px; outline: none; box-shadow: 0 4px 10px rgba(255,87,34,0.05); transition: background-color 0.15s ease; }
+        .scan-input.success-flash { background-color: #d4edda; border-color: #28a745; }
 
         /* Modal Customizado de Senha */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); z-index: 1000; justify-content: center; align-items: center; }
@@ -98,11 +99,11 @@
         .btn-cancel { background: #cbd5e1; color: #475569; }
     </style>
 
-    <!-- SDKs do Firebase Compatíveis com Arquivo Local (file://) -->
+    <!-- Carregamento das Bibliotecas Firebase -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 </head>
-<body>
+<body onclick="window.manterFocoScanner()">
 
     <div class="sidebar">
         <div class="sidebar-brand">Shopee<span>XPRESS</span></div>
@@ -140,7 +141,7 @@
                 </div>
             </div>
             <div class="report-container" style="padding: 25px; margin-bottom: 20px;">
-                <input type="text" id="scanner" class="scan-input" placeholder="Bipe o código de barras aqui..." onkeypress="window.processarBip(event)" autocomplete="off">
+                <input type="text" id="scanner" class="scan-input" placeholder="Bipe o código de barras aqui..." onkeydown="window.tratarEventoScanner(event)" autocomplete="off" autofocus>
             </div>
             <div class="report-container table-wrapper">
                 <table class="hist-table" id="tabela-recente">
@@ -271,13 +272,13 @@
           projectId: "base-erros",
           storageBucket: "base-erros.firebasestorage.app",
           messagingSenderId: "980428286676",
-          appId: "1:980428286676:web:519b34539b91cd9caae941",
-          measurementId: "G-NJH5GZTF80"
+          appId: "1:980428286676:web:aeaaf087d74a2a3caae941",
+          measurementId: "G-KJ571B3LR4"
         };
 
         firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
-        const colErros = db.collection("erros_bipados");
+        const db = firebase.database();
+        const refErros = db.ref("erros_bipados");
 
         const SENHA_LIDERANCA = "1510";
 
@@ -290,6 +291,22 @@
         var acaoPendente = null;
         var elementoPendente = null;
 
+        // RESTAURAR PLANILHA SALVA NO NAVEGADOR
+        window.addEventListener('DOMContentLoaded', function() {
+            var dadosSalvos = localStorage.getItem('shopee_base_operacional');
+            var resumoSalvo = localStorage.getItem('shopee_resumo_operadores');
+            if (dadosSalvos && resumoSalvo) {
+                try {
+                    baseDeDados = new Map(JSON.parse(dadosSalvos));
+                    resumoOperadores = JSON.parse(resumoSalvo);
+                    var msg = document.getElementById('status-msg');
+                    if (msg) msg.innerHTML = "✅ Base Operacional de " + baseDeDados.size.toLocaleString() + " linhas carregada do armazenamento local!";
+                } catch(e) {
+                    console.error("Erro ao carregar dados locais", e);
+                }
+            }
+        });
+
         function obterCorEscalaCalor(porcentagem) {
             const p = parseFloat(porcentagem);
             if (isNaN(p) || p <= 0) return "#2ed573";
@@ -298,6 +315,15 @@
             if (p < 25) return "#ff7f50";
             return "#d63031";
         }
+
+        window.manterFocoScanner = function() {
+            if (paginaAtiva === 'bipar') {
+                var sc = document.getElementById('scanner');
+                if (sc && document.activeElement !== sc && document.activeElement.tagName !== 'BUTTON') {
+                    sc.focus();
+                }
+            }
+        };
 
         function processarContagemErros() {
             Object.keys(resumoOperadores).forEach(function(op) { 
@@ -315,31 +341,65 @@
             });
         }
 
-        // ESCUTA EM TEMPO REAL FIRESTORE
-        colErros.orderBy("timestamp", "desc").limit(100).onSnapshot(function(snapshot) {
+        // ESCUTA EM TEMPO REAL FIRESTORE/REALTIME
+        refErros.limitToLast(100).on("value", function(snapshot) {
             errosRegistrados = [];
-            snapshot.forEach(function(doc) {
-                errosRegistrados.push(Object.assign({ id_nuvem: doc.id }, doc.data()));
-            });
+            var dataObj = snapshot.val();
+            if (dataObj) {
+                Object.keys(dataObj).forEach(function(key) {
+                    var item = dataObj[key];
+                    item.id_nuvem = key;
+                    errosRegistrados.unshift(item);
+                });
+            }
             
             processarContagemErros();
 
             var cloudStatus = document.getElementById('cloud-status');
             if (cloudStatus) {
-                cloudStatus.innerHTML = "🟢 ONLINE (FIRESTORE)";
+                cloudStatus.innerHTML = "🟢 ONLINE (NUVEM)";
                 cloudStatus.style.color = "#2ed573";
             }
             if (paginaAtiva === 'bipar') window.renderizarBipsRecentes();
             if (paginaAtiva === 'audit') window.renderizarPerformance();
             if (paginaAtiva === 'diario') window.renderizarHistoricoDiario();
         }, function(error) {
-            console.error("Erro Firestore:", error);
+            console.error("Erro Conexão:", error);
             var cloudStatus = document.getElementById('cloud-status');
             if (cloudStatus) {
                 cloudStatus.innerHTML = "🔴 ERRO DE CONEXÃO";
                 cloudStatus.style.color = "#d63031";
             }
         });
+
+        window.tratarEventoScanner = function(e) {
+            if (e.key === "Enter" || e.keyCode === 13 || e.key === "Tab" || e.keyCode === 9) {
+                e.preventDefault();
+                window.executarEnvioBip();
+            }
+        };
+
+        window.executarEnvioBip = function() {
+            var sc = document.getElementById('scanner');
+            if (!sc) return;
+            
+            var code = sc.value.trim();
+            if (!code) return;
+
+            sc.value = "";
+            sc.classList.add('success-flash');
+            setTimeout(function() { sc.classList.remove('success-flash'); }, 200);
+
+            var agora = new Date();
+            refErros.push({
+                code: code,
+                data: agora.toLocaleDateString('pt-BR'),
+                hora: agora.toLocaleTimeString('pt-BR'),
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            }).catch(function(err) {
+                alert("❌ Erro ao salvar na nuvem: " + err.message);
+            });
+        };
 
         /* --- MODAL E SENHA --- */
         window.solicitarAcesso = function(paginaId, btnElemento) {
@@ -384,8 +444,7 @@
                     window.showPage(acao.id, el);
                 } else if (acao && acao.tipo === 'limpar') {
                     if(confirm("Tem certeza que deseja apagar os bips da nuvem?")) {
-                        colErros.get().then(function(snapshot) {
-                            snapshot.forEach(function(d) { d.ref.delete(); });
+                        refErros.remove().then(function() {
                             location.reload();
                         });
                     }
@@ -425,25 +484,6 @@
             if (id === 'diario') window.renderizarHistoricoDiario();
         };
 
-        window.processarBip = function(e) {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                var sc = document.getElementById('scanner');
-                var code = sc ? sc.value.trim() : "";
-                if (sc) sc.value = ""; 
-                if (!code) return;
-                
-                colErros.add({ 
-                    code: code, 
-                    data: new Date().toLocaleDateString('pt-BR'), 
-                    hora: new Date().toLocaleTimeString('pt-BR'), 
-                    timestamp: Date.now() 
-                }).catch(function(err) {
-                    console.error("Erro no bip:", err);
-                });
-            }
-        };
-
         window.copiarCodigosBipados = function() {
             if (errosRegistrados.length === 0) {
                 alert("Nenhum código registrado para copiar.");
@@ -455,7 +495,7 @@
             });
         };
 
-        /* --- RENDERIZAÇÃO DE PERFORMANCE (MATRIZ DIGITAL) --- */
+        /* --- MATRIZ DIGITAL DE PERFORMANCE --- */
         window.renderizarPerformance = function() {
             var tbodyEsq = document.querySelector('#tabela-perf-esquerda tbody');
             var tbodyDir = document.querySelector('#tabela-perf-direita tbody');
@@ -502,7 +542,7 @@
             document.getElementById('card-master-acuracidade').innerText = tVal > 0 ? (((tVal - tErr) / tVal) * 100).toFixed(1) + "%" : "100%";
         };
 
-        /* --- RENDERIZAÇÃO DE HISTÓRICO DIÁRIO --- */
+        /* --- RELATÓRIO DE IMPACTO DIÁRIO --- */
         window.renderizarHistoricoDiario = function() {
             var container = document.getElementById('container-historico');
             if (!container) return;
@@ -569,25 +609,23 @@
 
         window.deletarBipIndividual = function(id) { 
             if(confirm("Remover da nuvem?")) {
-                colErros.doc(id).delete();
+                refErros.child(id).remove();
             }
         };
 
         window.resetarPaginaBips = function() { 
             if(confirm("Limpar bips da nuvem?")) { 
-                colErros.get().then(function(snapshot) {
-                    snapshot.forEach(function(d) { d.ref.delete(); });
-                });
+                refErros.remove();
             } 
         };
 
-        /* --- LEITURA RÁPIDA DE CSV (SEGUNDO PLANO) --- */
+        /* --- PROCESSAMENTO E ARMAZENAMENTO DA PLANILHA --- */
         window.lerArquivo = function(event) {
             var file = event.target.files[0];
             if (!file) return;
 
             var reader = new FileReader();
-            document.getElementById('status-msg').innerHTML = "⏳ Processando base de dados...";
+            document.getElementById('status-msg').innerHTML = "⏳ Processando base de dados e salvando no navegador...";
             
             reader.onload = function(e) {
                 var textoCompleto = e.target.result;
@@ -634,8 +672,16 @@
                         resumoOperadores[op].total++;
                     }
                 }
+
+                // GRAVAÇÃO PERMANENTE NO COMPUTADOR
+                try {
+                    localStorage.setItem('shopee_base_operacional', JSON.stringify(Array.from(baseDeDados.entries())));
+                    localStorage.setItem('shopee_resumo_operadores', JSON.stringify(resumoOperadores));
+                } catch(e) {
+                    console.warn("Aviso: Ficheiro demasiado grande para o localStorage do navegador.", e);
+                }
                 
-                document.getElementById('status-msg').innerHTML = "✅ Planilha de " + baseDeDados.size.toLocaleString() + " linhas carregada com sucesso!";
+                document.getElementById('status-msg').innerHTML = "✅ Planilha de " + baseDeDados.size.toLocaleString() + " linhas salva no computador!";
                 processarContagemErros();
                 if (paginaAtiva === 'audit') window.renderizarPerformance();
                 if (paginaAtiva === 'diario') window.renderizarHistoricoDiario();
@@ -644,14 +690,18 @@
         };
 
         window.resetarBaseLocal = function() { 
-            baseDeDados.clear();
-            resumoOperadores = {};
-            var csvInp = document.getElementById('csv-file');
-            if (csvInp) csvInp.value = "";
-            document.getElementById('status-msg').innerHTML = "⚠️ Base local removida.";
-            processarContagemErros();
-            if (paginaAtiva === 'audit') window.renderizarPerformance();
-            if (paginaAtiva === 'diario') window.renderizarHistoricoDiario();
+            if (confirm("Deseja apagar a Base Operacional salva no computador?")) {
+                baseDeDados.clear();
+                resumoOperadores = {};
+                localStorage.removeItem('shopee_base_operacional');
+                localStorage.removeItem('shopee_resumo_operadores');
+                var csvInp = document.getElementById('csv-file');
+                if (csvInp) csvInp.value = "";
+                document.getElementById('status-msg').innerHTML = "⚠️ Base local removida.";
+                processarContagemErros();
+                if (paginaAtiva === 'audit') window.renderizarPerformance();
+                if (paginaAtiva === 'diario') window.renderizarHistoricoDiario();
+            }
         };
     </script>
 </body>
