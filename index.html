@@ -17,7 +17,7 @@
         .menu-btn { padding: 14px 20px; border: none; background: none; color: #b2bec3; text-align: left; cursor: pointer; font-size: 13px; border-left: 4px solid transparent; transition: all 0.2s ease; display: flex; align-items: center; gap: 12px; width: 100%; }
         .menu-btn:hover { background-color: #242424; color: white; }
         .menu-btn.active { background-color: #242424; border-left: 4px solid #ff5722; color: #ff5722; font-weight: bold; }
-        #cloud-status { font-size: 11px; text-align: center; padding: 12px; color: #2ed573; background-color: #0f0f0f; margin-top: auto; font-weight: 600; letter-spacing: 0.5px; }
+        #cloud-status { font-size: 11px; text-align: center; padding: 12px; color: #a4b0be; background-color: #0f0f0f; margin-top: auto; font-weight: 600; letter-spacing: 0.5px; }
 
         /* Área de Conteúdo */
         .content { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; background: #f8f9fa; }
@@ -111,8 +111,8 @@
         <button id="btn-audit" class="menu-btn" onclick="window.solicitarAcesso('audit', this)">📊 3. Performance 🔒</button>
         <button id="btn-diario" class="menu-btn" onclick="window.solicitarAcesso('diario', this)">📅 4. Histórico Diário 🔒</button>
         
-        <div id="cloud-status">💻 MODO LOCAL (SEM BD)</div>
-        <button class="btn-danger" onclick="window.solicitarLimpeza()">⚠️ LIMPAR MEMÓRIA</button>
+        <div id="cloud-status">🔄 Conectando NUVEM...</div>
+        <button class="btn-danger" onclick="window.solicitarLimpeza()">⚠️ LIMPAR NUVEM</button>
     </div>
 
     <div class="content">
@@ -123,7 +123,7 @@
                     <input type="file" id="csv-file" class="file-input" accept=".csv" onchange="window.lerArquivo(event)">
                     <button class="btn-utility" style="background: #7f8c8d; color: white;" onclick="window.resetarBaseLocal()">🔄 Resetar Base Local</button>
                 </div>
-                <div id="status-msg" style="margin-top: 15px; font-weight: 600;">⚠️ Nenhuma Base Operacional ativa. Importe um arquivo CSV.</div>
+                <div id="status-msg" style="margin-top: 15px; font-weight: 600;"></div>
             </div>
         </div>
 
@@ -259,20 +259,36 @@
         </div>
     </div>
 
-    <script>
-        // Nova Senha Configurada
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, getDocs, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Configuração do seu Firebase "base-erros"
+        const firebaseConfig = {
+          apiKey: "AIzaSyDmEcaOvGgoi_1YO8ugfzGdp15aDsImpI0",
+          authDomain: "base-erros.firebaseapp.com",
+          databaseURL: "https://base-erros-default-rtdb.firebaseio.com",
+          projectId: "base-erros",
+          storageBucket: "base-erros.firebasestorage.app",
+          messagingSenderId: "980428286676",
+          appId: "1:980428286676:web:519b34539b91cd9caae941",
+          measurementId: "G-NJH5GZTF80"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const colErros = collection(db, "erros_bipados");
+
         const SENHA_LIDERANCA = "1510";
 
-        // Variáveis do Modal
+        let baseDeDados = new Map();
+        let resumoOperadores = {};
+        let errosRegistrados = [];
+        let paginaAtiva = 'receive';
+        const listaCoresBolinhas = ['#ff5722', '#9b59b6', '#3498db', '#f1c40f', '#1abc9c', '#e67e22', '#2ecc71', '#34495e'];
+
         var acaoPendente = null;
         var elementoPendente = null;
-
-        // Estado do Sistema
-        var baseDeDados = new Map();
-        var resumoOperadores = {};
-        var errosRegistrados = [];
-        var paginaAtiva = 'receive';
-        var listaCoresBolinhas = ['#ff5722', '#9b59b6', '#3498db', '#f1c40f', '#1abc9c', '#e67e22', '#2ecc71', '#34495e'];
 
         function obterCorEscalaCalor(porcentagem) {
             const p = parseFloat(porcentagem);
@@ -283,13 +299,28 @@
             return "#d63031";
         }
 
+        function carregarBaseLocal() {
+            try {
+                const baseSalva = localStorage.getItem("spx_local_base");
+                const resumoSalvo = localStorage.getItem("spx_local_resumo");
+                if (baseSalva && resumoSalvo) {
+                    baseDeDados = new Map(JSON.parse(baseSalva));
+                    resumoOperadores = JSON.parse(resumoSalvo);
+                    document.getElementById('status-msg').innerHTML = `🟢 Base Operacional ativa na memória (${baseDeDados.size} pacotes).`;
+                } else {
+                    document.getElementById('status-msg').innerHTML = "⚠️ Nenhuma Base Operacional ativa. Importe um arquivo CSV.";
+                }
+            } catch(e) {
+                console.error("Erro ao ler localStorage", e);
+            }
+        }
+        carregarBaseLocal();
+
         function processarContagemErros() {
-            Object.keys(resumoOperadores).forEach(function(op) { 
-                resumoOperadores[op].erros = 0; 
-            });
+            Object.keys(resumoOperadores).forEach(op => { resumoOperadores[op].erros = 0; });
             
-            errosRegistrados.forEach(function(e) {
-                var operadorAtual = baseDeDados.get(e.code) || "Não Encontrado na Base";
+            errosRegistrados.forEach(e => {
+                const operadorAtual = baseDeDados.get(e.code) || "Não Encontrado na Base";
                 e.op = operadorAtual;
 
                 if (!resumoOperadores[operadorAtual]) {
@@ -298,6 +329,26 @@
                 resumoOperadores[operadorAtual].erros++;
             });
         }
+
+        // SINCRONIZAÇÃO EM TEMPO REAL COM O FIRESTORE
+        onSnapshot(query(colErros, orderBy("timestamp", "desc")), (snapshot) => {
+            errosRegistrados = [];
+            snapshot.forEach((doc) => { errosRegistrados.push({ id_nuvem: doc.id, ...doc.data() }); });
+            processarContagemErros();
+            const cloudStatus = document.getElementById('cloud-status');
+            if (cloudStatus) {
+                cloudStatus.innerHTML = "🟢 ONLINE (FIRESTORE)";
+                cloudStatus.style.color = "#2ed573";
+            }
+            atualizarTelasDinamicas();
+        }, (error) => {
+            console.error("Erro na sincronização Firestore:", error);
+            const cloudStatus = document.getElementById('cloud-status');
+            if (cloudStatus) {
+                cloudStatus.innerHTML = "🔴 ERRO DE CONEXÃO";
+                cloudStatus.style.color = "#d63031";
+            }
+        });
 
         function atualizarTelasDinamicas() {
             if (paginaAtiva === 'audit') window.renderizarPerformance();
@@ -337,7 +388,7 @@
             }
         };
 
-        window.validarSenhaModal = function() {
+        window.validarSenhaModal = async function() {
             var senhaDigitada = document.getElementById('input-senha-modal').value;
             if (senhaDigitada === SENHA_LIDERANCA) {
                 var acao = acaoPendente;
@@ -347,10 +398,13 @@
                 if (acao && acao.tipo === 'navegar') {
                     window.showPage(acao.id, el);
                 } else if (acao && acao.tipo === 'limpar') {
-                    baseDeDados.clear();
-                    resumoOperadores = {};
-                    errosRegistrados = [];
-                    location.reload();
+                    if(confirm("Tem certeza que deseja apagar todos os bips salvos na NUVEM e na base local?")) {
+                        const bips = await getDocs(colErros);
+                        bips.forEach(async d => await deleteDoc(d.ref)); 
+                        localStorage.removeItem("spx_local_base");
+                        localStorage.removeItem("spx_local_resumo");
+                        location.reload(); 
+                    }
                 }
             } else {
                 alert("❌ Senha incorreta!");
@@ -362,15 +416,8 @@
         /* --- NAVEGAÇÃO E OPERAÇÕES --- */
         window.showPage = function(id, btn) {
             paginaAtiva = id;
-            var paginas = document.querySelectorAll('.page');
-            for (var i = 0; i < paginas.length; i++) {
-                paginas[i].classList.remove('active');
-            }
-
-            var botoes = document.querySelectorAll('.menu-btn');
-            for (var j = 0; j < botoes.length; j++) {
-                botoes[j].classList.remove('active');
-            }
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
 
             var paginaAlvo = document.getElementById(id);
             if (paginaAlvo) paginaAlvo.classList.add('active');
@@ -378,7 +425,7 @@
 
             if (id === 'bipar') { 
                 window.renderizarBipsRecentes(); 
-                setTimeout(function() { 
+                setTimeout(() => { 
                     var sc = document.getElementById('scanner');
                     if (sc) sc.focus(); 
                 }, 100); 
@@ -387,25 +434,25 @@
             if (id === 'diario') window.renderizarHistoricoDiario();
         };
 
-        window.processarBip = function(e) {
+        window.processarBip = async function(e) {
             if (e.key === "Enter") {
                 e.preventDefault();
-                var sc = document.getElementById('scanner');
-                var code = sc ? sc.value.trim() : "";
+                const sc = document.getElementById('scanner');
+                const code = sc ? sc.value.trim() : "";
                 if (sc) sc.value = ""; 
                 if (!code) return;
                 
-                var novoErro = {
-                    id_local: 'err_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-                    code: code,
-                    data: new Date().toLocaleDateString('pt-BR'),
-                    hora: new Date().toLocaleTimeString('pt-BR'),
-                    timestamp: Date.now()
-                };
-
-                errosRegistrados.unshift(novoErro);
-                processarContagemErros();
-                atualizarTelasDinamicas();
+                try {
+                    await addDoc(colErros, { 
+                        code: code, 
+                        data: new Date().toLocaleDateString('pt-BR'), 
+                        hora: new Date().toLocaleTimeString('pt-BR'), 
+                        timestamp: Date.now() 
+                    });
+                } catch (err) {
+                    console.error("Erro ao salvar no Firestore:", err);
+                    alert("⚠️ Erro ao registrar o bip na nuvem.");
+                }
             }
         };
 
@@ -414,50 +461,44 @@
                 alert("Nenhum código registrado para copiar.");
                 return;
             }
-            var listaCodigos = errosRegistrados.map(function(e) { return e.code; }).join('\n');
-            navigator.clipboard.writeText(listaCodigos).then(function() {
+            const listaCodigos = errosRegistrados.map(e => e.code).join('\n');
+            navigator.clipboard.writeText(listaCodigos).then(() => {
                 alert("Todos os códigos BR foram copiados com sucesso!");
-            }).catch(function(err) {
+            }).catch(err => {
                 console.error("Erro ao copiar", err);
             });
         };
 
         window.renderizarPerformance = function() {
-            var tbodyEsq = document.querySelector('#tabela-perf-esquerda tbody');
-            var tbodyDir = document.querySelector('#tabela-perf-direita tbody');
+            const tbodyEsq = document.querySelector('#tabela-perf-esquerda tbody');
+            const tbodyDir = document.querySelector('#tabela-perf-direita tbody');
             if(!tbodyEsq || !tbodyDir) return;
             
-            var tVal = 0, tErr = 0;
+            let tVal = 0, tErr = 0;
             
-            var dados = Object.entries(resumoOperadores).sort(function(a, b) { return b[1].total - a[1].total; });
-            dados.forEach(function(item) { 
-                tVal += item[1].total; 
-                tErr += item[1].erros; 
-            });
+            const dados = Object.entries(resumoOperadores).sort((a, b) => b[1].total - a[1].total);
+            dados.forEach(([_, d]) => { tVal += d.total; tErr += d.erros; });
 
-            var metadeIndex = Math.ceil(dados.length / 2);
-            var metadeEsquerda = dados.slice(0, metadeIndex);
-            var metadeDireita = dados.slice(metadeIndex);
+            const metadeIndex = Math.ceil(dados.length / 2);
+            const metadeEsquerda = dados.slice(0, metadeIndex);
+            const metadeDireita = dados.slice(metadeIndex);
 
-            var mapearLinhas = function(lista, offsetOriginal) {
-                return lista.map(function(item, index) {
-                    var nome = item[0];
-                    var d = item[1];
-                    var indiceCor = offsetOriginal + index;
-                    var ac = d.total > 0 ? (((d.total - d.erros) / d.total) * 100).toFixed(1) : "0.0";
-                    var color = ac >= 95 ? "#2ed573" : (ac >= 90 ? "#ffa502" : "#d63031");
-                    
-                    return '<tr>' +
-                        '<td class="col-left" style="font-weight:600;"><span class="bullet-dot" style="background:' + listaCoresBolinhas[indiceCor % 8] + '"></span>' + nome + '</td>' +
-                        '<td style="color:#475569; font-weight:600;">' + d.total + '</td>' +
-                        '<td class="' + (d.erros > 0 ? 'badge-error' : 'badge-zero-error') + '">' + d.erros + '</td>' +
-                        '<td>' +
-                            '<div class="progress-container">' +
-                                '<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:' + ac + '%; background:' + color + '"></div></div>' +
-                                '<div class="progress-text">' + ac + '%</div>' +
-                            '</div>' +
-                        '</td>' +
-                    '</tr>';
+            const mapearLinhas = (lista, offsetOriginal) => {
+                return lista.map(([nome, d], index) => {
+                    const indiceCor = offsetOriginal + index;
+                    const ac = d.total > 0 ? (((d.total - d.erros) / d.total) * 100).toFixed(1) : "0.0";
+                    let color = ac >= 95 ? "#2ed573" : (ac >= 90 ? "#ffa502" : "#d63031");
+                    return `<tr>
+                        <td class="col-left" style="font-weight:600;"><span class="bullet-dot" style="background:${listaCoresBolinhas[indiceCor%8]}"></span>${nome}</td>
+                        <td style="color:#475569; font-weight:600;">${d.total}</td>
+                        <td class="${d.erros > 0 ? 'badge-error' : 'badge-zero-error'}">${d.erros}</td>
+                        <td>
+                            <div class="progress-container">
+                                <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${ac}%; background:${color}"></div></div>
+                                <div class="progress-text">${ac}%</div>
+                            </div>
+                        </td>
+                    </tr>`;
                 }).join('');
             };
 
@@ -474,102 +515,87 @@
         };
 
         window.renderizarHistoricoDiario = function() {
-            var container = document.getElementById('container-historico');
+            const container = document.getElementById('container-historico');
             if (!container) return;
             container.innerHTML = "";
-            var hist = {};
-            var conjuntoOperadoresComErro = new Set();
+            const hist = {};
+            const conjuntoOperadoresComErro = new Set();
 
-            errosRegistrados.forEach(function(e) {
+            errosRegistrados.forEach(e => {
                 if (!hist[e.data]) hist[e.data] = {};
                 hist[e.data][e.op] = (hist[e.data][e.op] || 0) + 1;
                 conjuntoOperadoresComErro.add(e.op);
             });
 
-            var datas = Object.keys(hist).sort(function(a, b) { 
-                return b.split('/').reverse().join('') - a.split('/').reverse().join(''); 
-            });
+            const datas = Object.keys(hist).sort((a,b) => b.split('/').reverse().join('') - a.split('/').reverse().join(''));
             
             document.getElementById('kpi-hist-erros').innerText = errosRegistrados.length;
             document.getElementById('kpi-hist-operadores-erro').innerText = conjuntoOperadoresComErro.size;
 
-            datas.forEach(function(data) {
-                var ops = hist[data];
-                var totalDia = Object.values(ops).reduce(function(a, b) { return a + b; }, 0);
-                
-                var linhasTabela = Object.entries(ops).sort(function(a, b) { return b[1] - a[1]; }).map(function(item, i) {
-                    var nome = item[0];
-                    var qtd = item[1];
-                    var perc = ((qtd / totalDia) * 100).toFixed(1);
-                    var color = obterCorEscalaCalor(perc);
-                    
-                    return '<tr>' +
-                        '<td class="col-left" style="font-weight:600;"><span class="bullet-dot" style="background:' + listaCoresBolinhas[i % 8] + '"></span>' + nome + '</td>' +
-                        '<td class="badge-error">' + qtd + '</td>' +
-                        '<td><div class="progress-container"><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:' + perc + '%; background:' + color + '"></div></div><div class="progress-text">' + perc + '%</div></div></td>' +
-                    '</tr>';
-                }).join('');
-
-                container.innerHTML += 
-                    '<div class="report-container" style="margin-bottom:20px;">' +
-                        '<div class="date-header-bar"><span>📅 DATA DO LOG: ' + data + '</span><span>Total de Erros no Dia: ' + totalDia + '</span></div>' +
-                        '<div class="table-wrapper">' +
-                            '<table class="hist-table">' +
-                                '<thead><tr><th class="col-left">Operador</th><th>Quantidade de Erros</th><th style="text-align: right; padding-right: 25px;">Participação no Erro (% do Dia)</th></tr></thead>' +
-                                '<tbody>' + linhasTabela + '</tbody>' +
-                            '</table>' +
-                        '</div>' +
-                    '</div>';
+            datas.forEach(data => {
+                const ops = hist[data];
+                const totalDia = Object.values(ops).reduce((a,b) => a+b, 0);
+                container.innerHTML += `
+                    <div class="report-container" style="margin-bottom:20px;">
+                        <div class="date-header-bar"><span>📅 DATA DO LOG: ${data}</span><span>Total de Erros no Dia: ${totalDia}</span></div>
+                        <div class="table-wrapper">
+                            <table class="hist-table">
+                                <thead><tr><th class="col-left">Operador</th><th>Quantidade de Erros</th><th style="text-align: right; padding-right: 25px;">Participação no Erro (% do Dia)</th></tr></thead>
+                                <tbody>
+                                    ${Object.entries(ops).sort((a,b)=>b[1]-a[1]).map(([nome, qtd], i) => {
+                                        const perc = ((qtd / totalDia) * 100).toFixed(1);
+                                        const color = obterCorEscalaCalor(perc);
+                                        return `<tr>
+                                            <td class="col-left" style="font-weight:600;"><span class="bullet-dot" style="background:${listaCoresBolinhas[i\%8]}"></span>${nome}</td>
+                                            <td class="badge-error">${qtd}</td>
+                                            <td><div class="progress-container"><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${perc}\%; background:${color}"></div></div><div class="progress-text">${perc}%</div></div></td>
+                                        </tr>`;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>`;
             });
         };
 
         window.renderizarBipsRecentes = function() {
-            var tbody = document.querySelector('#tabela-recente tbody');
+            const tbody = document.querySelector('#tabela-recente tbody');
             if (tbody) {
-                tbody.innerHTML = errosRegistrados.slice(0, 50).map(function(e) {
-                    return '<tr>' +
-                        '<td>' + e.hora + '</td>' +
-                        '<td style="font-family:monospace; font-weight:600;">' + e.code + '</td>' +
-                        '<td><button class="btn-utility" style="color:#e74c3c; border:none; padding:4px 8px;" onclick="window.deletarBipIndividual(\'' + e.id_local + '\')">🗑️</button></td>' +
-                    '</tr>';
-                }).join('');
+                tbody.innerHTML = errosRegistrados.slice(0, 50).map(e => `<tr><td>${e.hora}</td><td style="font-family:monospace; font-weight:600;">${e.code}</td><td><button class="btn-utility" style="color:#e74c3c; border:none; padding:4px 8px;" onclick="window.deletarBipIndividual('${e.id_nuvem}')">🗑️</button></td></tr>`).join('');
             }
         };
 
-        window.deletarBipIndividual = function(id) { 
-            if(confirm("Remover este registro?")) {
-                errosRegistrados = errosRegistrados.filter(function(e) { return e.id_local !== id; });
-                processarContagemErros();
-                atualizarTelasDinamicas();
+        window.deletarBipIndividual = async (id) => { 
+            if(confirm("Remover da nuvem?")) {
+                await deleteDoc(doc(db, "erros_bipados", id));
             }
         };
 
-        window.resetarPaginaBips = function() { 
-            if(confirm("Limpar todos os bips registrados?")) { 
-                errosRegistrados = [];
-                processarContagemErros();
-                atualizarTelasDinamicas();
+        window.resetarPaginaBips = async () => { 
+            if(confirm("Limpar todos os bips registrados na nuvem?")) { 
+                const snapshot = await getDocs(colErros);
+                snapshot.forEach(async d => await deleteDoc(d.ref));
             } 
         };
 
-        window.lerArquivo = function(event) {
-            var file = event.target.files[0];
+        window.lerArquivo = (event) => {
+            const file = event.target.files[0];
             if (!file) return;
 
-            var reader = new FileReader();
+            const reader = new FileReader();
             document.getElementById('status-msg').innerHTML = "⏳ Processando base de dados gigante... Aguarde.";
             
             reader.onload = function(e) {
-                var textoCompleto = e.target.result;
+                const textoCompleto = e.target.result;
                 
-                var primeiraQuebra = textoCompleto.indexOf('\n');
+                const primeiraQuebra = textoCompleto.indexOf('\n');
                 if (primeiraQuebra === -1) return;
-                var cabecalhoLinha = textoCompleto.substring(0, primeiraQuebra);
-                var div = cabecalhoLinha.includes(';') ? ';' : ',';
+                const cabecalhoLinha = textoCompleto.substring(0, primeiraQuebra);
+                const div = cabecalhoLinha.includes(';') ? ';' : ',';
                 
-                var cab = cabecalhoLinha.split(div);
-                var colT = cab.findIndex(function(c) { return c.trim().includes('SPX Tracking Number'); });
-                var colO = cab.findIndex(function(c) { return c.trim().toLowerCase().includes('operator'); });
+                const cab = cabecalhoLinha.split(div);
+                const colT = cab.findIndex(c => c.trim().includes('SPX Tracking Number'));
+                const colO = cab.findIndex(c => c.trim().toLowerCase().includes('operator'));
                 
                 if (colT === -1) {
                     document.getElementById('status-msg').innerHTML = "❌ Coluna 'SPX Tracking Number' não localizada no CSV.";
@@ -579,22 +605,22 @@
                 baseDeDados.clear();
                 resumoOperadores = {};
                 
-                var cursorIndex = primeiraQuebra + 1;
-                var finalTexto = textoCompleto.length;
+                let cursorIndex = primeiraQuebra + 1;
+                let finalTexto = textoCompleto.length;
 
                 while (cursorIndex < finalTexto) {
-                    var proximaQuebra = textoCompleto.indexOf('\n', cursorIndex);
+                    let proximaQuebra = textoCompleto.indexOf('\n', cursorIndex);
                     if (proximaQuebra === -1) proximaQuebra = finalTexto;
                     
-                    var linhaStr = textoCompleto.substring(cursorIndex, proximaQuebra).trim();
+                    let linhaStr = textoCompleto.substring(cursorIndex, proximaQuebra).trim();
                     cursorIndex = proximaQuebra + 1;
 
                     if (!linhaStr) continue;
 
-                    var col = linhaStr.split(div);
+                    let col = linhaStr.split(div);
                     if (col[colT]) {
-                        var track = col[colT].trim();
-                        var op = col[colO] ? col[colO].replace(/\[.*?\]/, '').trim() : "Desconhecido";
+                        let track = col[colT].trim();
+                        let op = col[colO] ? col[colO].replace(/\[.*?\]/, '').trim() : "Desconhecido";
                         
                         baseDeDados.set(track, op);
                         
@@ -605,20 +631,30 @@
                     }
                 }
                 
-                document.getElementById('status-msg').innerHTML = "✅ Planilha de " + baseDeDados.size + " linhas carregada na memória!";
-                processarContagemErros();
-                atualizarTelasDinamicas();
+                try {
+                    localStorage.setItem("spx_local_base", JSON.stringify(Array.from(baseDeDados.entries())));
+                    localStorage.setItem("spx_local_resumo", JSON.stringify(resumoOperadores));
+
+                    document.getElementById('status-msg').innerHTML = `✅ Planilha de ${baseDeDados.size} linhas carregada com sucesso!`;
+                    processarContagemErros();
+                    atualizarTelasDinamicas();
+                } catch (erroStorage) {
+                    console.error(erroStorage);
+                    document.getElementById('status-msg').innerHTML = "❌ Erro ao salvar dados no navegador. Arquivo muito grande.";
+                }
             };
             reader.readAsText(file, "UTF-8");
         };
 
-        window.resetarBaseLocal = function() { 
-            if(confirm("Deseja apagar a Base Operacional carregada?")) { 
+        window.resetarBaseLocal = () => { 
+            if(confirm("Deseja apagar a Base Operacional salva neste computador?")) { 
+                localStorage.removeItem("spx_local_base");
+                localStorage.removeItem("spx_local_resumo");
                 baseDeDados.clear();
                 resumoOperadores = {};
                 var csvInp = document.getElementById('csv-file');
                 if (csvInp) csvInp.value = "";
-                document.getElementById('status-msg').innerHTML = "⚠️ Base removida da memória.";
+                document.getElementById('status-msg').innerHTML = "⚠️ Base local removida.";
                 processarContagemErros();
                 atualizarTelasDinamicas();
             } 
